@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> ### 📦 本仓库已整合迁移至全新架构仓库：[`infra-ai-gateway`](https://github.com/seeyouagain-laoda/infra-ai-gateway)
+> 本仓库已归档并合并入统一架构体系。最新流式管理与本地反代规范请前往：
+> 👉 **[infra-ai-gateway / 02-antigravity-manager](https://github.com/seeyouagain-laoda/infra-ai-gateway/tree/main/02-antigravity-manager)**
+
+---
+
 # Antigravity-Manager：Gemini + Claude 本地反代终极方案（NAS Docker）
 
 > **本文章和教程由 AI（WorkBuddy）生成**，人类仅提供需求与验收。
