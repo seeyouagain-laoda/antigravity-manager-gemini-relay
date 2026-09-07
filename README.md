@@ -1,21 +1,21 @@
 # Antigravity-Manager：Gemini + Claude 本地反代终极方案（NAS Docker）
 
-> 用 [Antigravity-Manager](https://github.com/lbjlaq/Antigravity-Manager) 替代 gemini-web2api 类网页逆向方案：
-> OAuth 免 Cookie、官方 API 直连、多账号池自愈轮换，同时白嫖 **Gemini 3.7/3.8 全系 + 生图 + Claude Opus 4.6**。
-> 实测对话 **1.9–4.5s**（旧网页逆向方案 6.6–44.9s）。全程踩坑记录，脱敏无密钥。
+> **本文章和教程由 AI（WorkBuddy）生成**，人类仅提供需求与验收。
+>
+> ## 项目归属与致谢（本方案基于以下开源项目/服务搭建）
+> - **核心网关**：[lbjlaq/Antigravity-Manager](https://github.com/lbjlaq/Antigravity-Manager) — OAuth 多账号池 + 三协议反代（本教程主体）
+> - **网络出口**：[MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)（Clash.Meta 内核）— 分流与出口 IP 质量
+> - **Agent 框架**：[OpenClaw](https://openclaw.ai) — NAS/主机双端智能体，消费本网关 API
+> - **客户端**：WorkBuddy（本地 AI 工作台）
+> - **账号来源**：Google Antigravity IDE（免费 Gemini/CC 配额）
+> - **上游模型**：Google Gemini 3.7/3.8 系 + Anthropic Claude 4.6 系
+> - **参考**：[paxx1m/gemini-web2api](https://github.com/paxx1m/gemini-web2api)（旧方案，本教程第八节记录其退役原因）
 
-**旧方案用户请直接看 [第二节 方案对比] 和 [第五节 踩坑记录]**。
+> 用 Antigravity-Manager 替代 gemini-web2api 类网页逆向方案：
+> OAuth 免 Cookie、官方 API 直连、多账号池自愈轮换，实测对话 **1.9–4.5s**。脱敏无密钥。
 
 ---
 
-# Gemini 反代终极方案：Antigravity-Manager 完整部署与三端接入报告
-
-> **日期**：2026-09-07
-> **执行**：WorkBuddy（全程实测验证后汇报）
-> **性质**：替换旧 gmini（gemini-web2api）反代方案的完整交接文档
-> **结论先行**：用 Antigravity-Manager（Docker 部署于 NAS）替代旧 gemini-web2api 容器方案，Gemini 对话速度从 6.6–44.9s 提升到 **1.9–4.5s**，同时白嫖到 **Claude Opus 4.6 全系**与 **Gemini 生图**能力，三端（NAS OpenClaw / 主机 OpenClaw / WorkBuddy）已全部切换。
-
----
 
 ## 目录
 
@@ -194,6 +194,7 @@ http://<NAS局域网IP>:7890     # NAS mihomo 主实例（allow-lan: true，监�
 | **过时模型映射** | 调 `gemini-3-flash` 返回 "Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash" | 上游改名了，**用 3.7/3.8 系列 ID**，别用 3-flash |
 | **pro-image 配额** | `gemini-3-pro-image` 报 503 "No accounts available with quota" | Pro 账号的该模型配额受限，**改用 `gemini-3.1-flash-image`**（实测 21.8s 出图） |
 | **401 错误** | 客户端报 HTTP 401 | 实测矩阵：无 key=401、错 key=403、对 key=200。401 = 客户端没带 key；改密码后**管理台要重新登录** |
+| **403 账号风控（VALIDATION_REQUIRED）** | 单账号报 `403 PERMISSION_DENIED / VALIDATION_REQUIRED`，标记「反代已取消，已跳过自动刷新」 | ①错误弹窗点「点击去验证」→浏览器用**该账号**登录完成安全验证（首选，2分钟）②无效则装 gcloud：`gcloud auth login --update-adc`（失败先 `gcloud auth revoke <邮箱>`）③兜底：删号重新 OAuth（用常用浏览器）。**根因是配额榨干(全线99%)+同出口IP高频**，验证后要降并发/分流出口 |
 
 ### 5.3 实测速度（对比旧方案）
 
