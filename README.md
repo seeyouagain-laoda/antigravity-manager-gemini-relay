@@ -16,7 +16,6 @@
 
 ---
 
-
 ## 目录
 
 1. [背景：旧方案为什么不完美](#一背景旧方案为什么不完美)
@@ -304,7 +303,12 @@ http://<NAS局域网IP>:7890     # NAS mihomo 主实例（allow-lan: true，监�
 
 ---
 
-*报告完 — WorkBuddy 2026-09-07*## 十一、外网访问方案（不在局域网也能用）
+*报告完 — WorkBuddy 2026-09-07*
+
+
+---
+
+## 十一、外网访问方案（不在局域网也能用）
 
 ### 首选：Tailscale（已实测打通）
 
@@ -316,3 +320,86 @@ NAS 与手机/电脑都装 Tailscale 并登录同一账号后，**任意网络�
 **踩坑**：Tailscale 长期不重启可能出现 tailscale0 丢失 IPv4 地址（`ip -4 addr show tailscale0` 为空）导致 000 连不上，`systemctl restart tailscaled` 即恢复。
 
 优点：零端口暴露、WireGuard 加密、免费 100 设备；不依赖公网 IP/IPv6。备选：Cloudflare Tunnel（可绑域名分享给他人，但 Manager 的 API Key 就是唯一防线，慎开公网）。
+
+---
+
+## 十二、WorkBuddy 接入排障实录（两层错误，三层误判，最终自愈式修复）
+
+### 12.1 第一层：HTTP 400 「Failed to parse the request body as JSON: expected value at line 1 column 1 (proxy: undefined → http://…:8045)」
+
+**现象**：WorkBuddy 5.3.14 自定义模型调用 Manager，全部请求 400，零成功；而 curl / urllib 直连同一端点连 200KB 大请求都正常。
+
+**排障弯路（两次误判）**：
+
+| 误判 | 依据 | 为什么错 |
+|---|---|---|
+| URL 格式不对（全路径 vs base 风格） | 能用的 pplx 条目都是 base 风格 | 改了没用，症状不变 |
+| keep-alive 陈旧连接（Manager 容器重建过） | 13:17 空 body、13:28 传到 147KB 截断的「渐进式损坏」 | 重启后照崩，假设推翻 |
+
+**实锤手段**：Manager 数据卷里的流量日志库 `proxy_logs.db`（表 `request_logs` 含 `request_body` 原文）。拉回本地 sqlite 分析发现——WorkBuddy 发出的是**代理风格绝对地址请求**：
+
+```
+POST http://<ip>:8045/v1/chat/completions HTTP/1.1   ← 把端点当 HTTP 代理用
+（无 Host 头）
+```
+
+**根因**：WorkBuddy 5.3.14 对 `http://IP:端口` 形态的自定义模型走了错误的 proxy 路径（旁证：配置里所有 `https://` 模型全部正常，仅有的两条 `http://IP` 全军覆没）。
+
+**修复**：不给 http 路径，改走 TLS——复用 NAS nginx 8446（旧 gmini 方案的 HTTPS 入口，证书现成），`proxy_pass` 从已死的 8090 改到 Manager 8045；WorkBuddy 侧 URL 统一 `https://<你的域名>:8446/v1`（与一直正常的旧 gmini 同形态）。
+
+**顺带排掉的坑**：
+
+1. fnOS 的 nginx `sites-enabled/gemini` 是**独立副本不是软链**——只改 `sites-available` 无效，两份都要改
+2. 这台 nginx 对 `reload` 不生效（`nginx -T` 显示新配置已加载，但老 worker 继续用旧配置接客）——必须 `systemctl restart nginx`
+
+### 12.2 第二层：「Failed to run function tools: TypeError: Cannot read properties of undefined (reading 'split')」
+
+400 消失后，agent 任务（会触发工具调用）开始崩这个错，Gemini 3.7 / 3.8 都中招。
+
+**弯路（第三次误判）**：以为是 WorkBuddy 工具执行器不认标准 OpenAI `call_xxx` 工具 ID（社区有同名案例与 sanitizer 补丁），先关 `supportsToolCall`，又给 CLI 流式适配器手工打了 5.3.14 定制补丁——**都没用**，因为那条代码路径根本不在崩溃链上。
+
+**实锤手段（三层证据链）**：
+
+1. **运行日志**（`~/.workbuddy/logs/<日期>/` 下的 cli_host 日志）——崩溃前 2ms 固定出现：
+   ```
+   [Warning] [SandboxPermissionGateway] check failed, falling back to legacy path: … (reading 'slice')
+   ```
+   随后 `'split'` 崩溃；且 `lastPendingTool=PowerShell/call_xxx` → 锁定「执行内置 PowerShell 工具时崩」
+2. **代码定位**：PowerShell 工具 `needsApproval` 第一行解构 `let {command} = args` → 权限网关对 `undefined` 做 `.slice` 崩 → fallback 后安全检查对 `undefined` 做 `.split` 崩
+3. **决定性证据**——Manager 流量库的 **`response_body`**（模型真实输出）：
+   ```json
+   {"name":"PowerShell","arguments":"{\"description\":\"Get repositories using gh CLI…\"}"}
+   ```
+   **模型调用 PowerShell 时没带必填的 `command` 参数，只给了一个 `description`**。同会话前几轮都正常带 command——Gemini 偶发吐坏参数。
+
+**为什么一个坏调用能杀掉整个会话**：WorkBuddy CLI 执行器 `executeFunctionToolCalls` 对批量工具调用的 map 回调**没有任何 try/catch**，单个调用抛异常 → 包成 ToolCallError → 整轮 prompt 直接 refusal。正确行为应该是：把错误作为工具输出喂回模型，让它补上参数重试。
+
+### 12.3 最终修复（自愈式，已实测）
+
+对 `app.asar.unpacked/cli/dist/codebuddy.js` 打两个补丁：
+
+| 补丁 | 内容 | 效果 |
+|---|---|---|
+| **逐调用容错** | map 回调包 try/catch，异常经 `buildParseErrorResult` 变成一条 `function_output` 错误信息回给模型 | 坏调用不再致命；模型看到 "missing command" 自动补参重试，**会话自愈** |
+| **堆栈探针** | ToolCallError 消息注入 `\|\|STACK\|\| <完整堆栈>`（仅致命路径触发） | 以后再出怪错，错误报告直接带崩点 |
+
+**实测**：3 条连续 PowerShell 命令测试用例，39 秒全部执行成功，恢复「测试通过」。
+
+**注意事项**：
+
+- WorkBuddy **官方更新会覆盖** `codebuddy.js`，补丁失效需重打（原始备份：`codebuddy.js.mybak.<日期>`）
+- 定制补丁用「精确 needle 匹配，不唯一即退出」写法——版本升级后 needle 变了会安全拒绝，不会写坏文件
+- 曾有一次植入事故：提取原始代码块时截短 400 字符导致文件语法损坏，靠备份立即恢复——**改 dist 前必须先备份 + 改完必须 `node --check`**
+
+### 12.4 排障方法论沉淀
+
+| 经验 | 说明 |
+|---|---|
+| **先拿实锤再动手** | 两次弯路都源于「合理猜测」；翻盘全靠流量日志（request_body / response_body）和运行日志的逐毫秒序列 |
+| **WorkBuddy 桌面架构** | agent 不是跑在渲染进程，而是 `WorkBuddy.exe <resources>/app.asar.unpacked/cli/bin/codebuddy --serve` 伪 node 子进程；改 CLI 文件后必须完全重启 WorkBuddy 才生效 |
+| **日志位置** | 运行日志：`~/.workbuddy/logs/<日期>/`；Manager 流量库：`/root/.antigravity_tools/proxy_logs.db`（含请求/响应全文，可拉回本地 sqlite 分析） |
+| **Manager 的 DB 是金矿** | `request_body` 看客户端真实发了什么，`response_body` 看模型真实回了什么——「客户端的锅还是模型的锅」一查便知 |
+| **容错设计** | 任何 agent 框架的工具执行都应逐调用隔离错误——单工具失败是常态（模型抽风/参数不合法），喂回错误即可自愈；整会话崩溃是最差解 |
+
+---
+
