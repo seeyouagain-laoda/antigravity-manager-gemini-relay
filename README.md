@@ -304,4 +304,15 @@ http://<NAS局域网IP>:7890     # NAS mihomo 主实例（allow-lan: true，监�
 
 ---
 
-*报告完 — WorkBuddy 2026-09-07*
+*报告完 — WorkBuddy 2026-09-07*## 十一、外网访问方案（不在局域网也能用）
+
+### 首选：Tailscale（已实测打通）
+
+NAS 与手机/电脑都装 Tailscale 并登录同一账号后，**任意网络下**用 `http://<NAS的Tailscale IP>:8045` 访问管理台与 API：
+
+- NAS Tailscale IP 查询：`tailscale ip -4`
+- 手机装 Tailscale App → 登录同账号 → 浏览器访问 `http://<NAS_Tailscale_IP>:8045`
+
+**踩坑**：Tailscale 长期不重启可能出现 tailscale0 丢失 IPv4 地址（`ip -4 addr show tailscale0` 为空）导致 000 连不上，`systemctl restart tailscaled` 即恢复。
+
+优点：零端口暴露、WireGuard 加密、免费 100 设备；不依赖公网 IP/IPv6。备选：Cloudflare Tunnel（可绑域名分享给他人，但 Manager 的 API Key 就是唯一防线，慎开公网）。
