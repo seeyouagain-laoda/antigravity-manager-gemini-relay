@@ -194,7 +194,7 @@ http://<NAS局域网IP>:7890     # NAS mihomo 主实例（allow-lan: true，监�
 | **过时模型映射** | 调 `gemini-3-flash` 返回 "Gemini 3.5 Flash is no longer available. Please switch to Gemini 3.7 Flash" | 上游改名了，**用 3.7/3.8 系列 ID**，别用 3-flash |
 | **pro-image 配额** | `gemini-3-pro-image` 报 503 "No accounts available with quota" | Pro 账号的该模型配额受限，**改用 `gemini-3.1-flash-image`**（实测 21.8s 出图） |
 | **401 错误** | 客户端报 HTTP 401 | 实测矩阵：无 key=401、错 key=403、对 key=200。401 = 客户端没带 key；改密码后**管理台要重新登录** |
-| **403 账号风控（VALIDATION_REQUIRED）** | 单账号报 `403 PERMISSION_DENIED / VALIDATION_REQUIRED`，标记「反代已取消，已跳过自动刷新」 | ①错误弹窗点「点击去验证」→浏览器用**该账号**登录完成安全验证（首选，2分钟）②无效则装 gcloud：`gcloud auth login --update-adc`（失败先 `gcloud auth revoke <邮箱>`）③兜底：删号重新 OAuth（用常用浏览器）。**根因是配额榨干(全线99%)+同出口IP高频**，验证后要降并发/分流出口 |
+| **403 账号风控（VALIDATION_REQUIRED）** | 单账号报 `403 PERMISSION_DENIED / VALIDATION_REQUIRED`，标记「反代已取消，已跳过自动刷新」 | ①错误弹窗点「点击去验证」→浏览器用**该账号**登录完成安全验证（首选，2分钟）②无效则装 gcloud：`gcloud auth login --update-adc`（失败先 `gcloud auth revoke <邮箱>`）③兜底：删号重新 OAuth（用常用浏览器）。**根因与配额无关（仪表盘99%为剩余额度），指向同出口IP挂多账号+高频程序化调用触发 Google 安全验证**，验证后建议分流出口/降低单号调用频率 |
 
 ### 5.3 实测速度（对比旧方案）
 
